@@ -127,12 +127,16 @@ def draw_images_with_offset(im1, im2, row_offset, column_offset):
     if len(im1.shape) > 2:
         new_image = np.zeros((im1.shape[0] + 2*abs_c_o,
                               im1.shape[1] + 2*abs_r_o, im1.shape[2]))
+        mode = "RGBA"
     else:
         new_image = np.zeros((im1.shape[0] + 2*abs_c_o,
                               im1.shape[1] + 2*abs_r_o))
+        mode = "L"
     new_image[abs_c_o: abs_c_o + im1.shape[0], abs_r_o: abs_r_o + im1.shape[1]] = im1
-    new_image[abs_c_o + c_o: abs_c_o + c_o + im2.shape[0], abs_r_o + r_o: abs_r_o + r_o + im2.shape[1]] = im2
-    im = Image.fromarray(new_image)
+    new_image[abs_c_o + c_o: abs_c_o + c_o + im2.shape[0],
+              abs_r_o + r_o: abs_r_o + r_o + im2.shape[1]] = im2
+    new_image = np.uint8(new_image)
+    im = Image.fromarray(new_image, mode=mode)
     im.show()
 
 def match_images(images, show_corners):
@@ -176,7 +180,7 @@ def match_images(images, show_corners):
     # final step: display the result
     print("Result: {} {}".format(row_offset, column_offset))
     print("Drawing images...")
-    draw_images_with_offset(grey_scale(images[0]), grey_scale(images[1]), row_offset, column_offset)
+    draw_images_with_offset(images[0], images[1], row_offset, column_offset)
 
 
 def main():
@@ -200,6 +204,7 @@ def main():
         image2 = np.asarray(Image.open(args.file2))
         print("Read image 2: {0}x{1} pixels.".format(*image2.shape))
         match_images([image1, image2], args.show_corners)
+        # draw_images_with_offset(image1, image2, 0, 0)
 
 if __name__ == "__main__":
     main()
