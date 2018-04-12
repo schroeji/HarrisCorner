@@ -4,13 +4,17 @@ import sys
 import numpy as np
 from PIL import Image, ImageDraw
 
+from exhaustive_ransac import basic_RANSAC
+
 # window size
-DELTA_X = 5
-DELTA_Y = 5
+DELTA_X = 10
+DELTA_Y = 10
 # trace scaling factor
-K = 0.04
+K = 0.06
 # detection threshold
-CORNER_THRESHOLD = 1e10
+CORNER_THRESHOLD = 1e5
+# detection multiplier for max_r value
+CORNER_THRESHOLD_MULTIPLIER = 0.1
 # color of the crosses used to indicate a corner
 CROSS_COLOR = (255, 0, 0, 255)
 
@@ -90,13 +94,16 @@ def harris_corner_detection(grey_scale_image):
             M = calc_tensor(Ixx, Ixy, Iyy, x, y)
             r = np.linalg.det(M) - K*np.trace(M)**2.0
             r_values[x, y] = r
+    max_r = max(r_values.flatten())
     print("Thresholding and nonmax supression...")
     list_of_corners = []
     for x in range(DELTA_X, size_x - DELTA_X):
         for y in range(DELTA_Y, size_y - DELTA_Y):
             # thresholding and nonmax supression
             max_in_window = max(r_values[x - DELTA_X: x + DELTA_X + 1, y - DELTA_Y: y + DELTA_Y + 1].flatten())
-            if (r_values[x, y] > CORNER_THRESHOLD) and r_values[x, y] == max_in_window:
+            # if (r_values[x, y] > CORNER_THRESHOLD) and r_values[x, y] == max_in_window:
+                # list_of_corners.append((x, y))
+            if (r_values[x, y] >= max_r * CORNER_THRESHOLD_MULTIPLIER) and (r_values[x, y] == max_in_window):
                 list_of_corners.append((x, y))
     return list_of_corners
 
@@ -105,17 +112,33 @@ def patch_vectors(corner_list, image):
     patches = []
     for i, (x, y) in enumerate(corner_list):
         v = image[x - DELTA_X: x + DELTA_X + 1, y - DELTA_Y: y + DELTA_Y + 1].flatten()
+        v -= np.mean(v)
         norm = np.linalg.norm(v, 2)
         v /= norm
         patches.append(v)
     return np.vstack(patches)
 
+def draw_images_with_offset(im1, im2, row_offset, column_offset):
+    c_o = int(column_offset)
+    r_o = int(row_offset)
+    abs_c_o = abs(int(column_offset))
+    abs_r_o = abs(int(row_offset))
+    if len(im1.shape) > 2:
+        new_image = np.zeros((im1.shape[0] + 2*abs_c_o,
+                              im1.shape[1] + 2*abs_r_o, im1.shape[2]))
+    else:
+        new_image = np.zeros((im1.shape[0] + 2*abs_c_o,
+                              im1.shape[1] + 2*abs_r_o))
+    new_image[abs_c_o: abs_c_o + im1.shape[0], abs_r_o: abs_r_o + im1.shape[1]] = im1
+    new_image[abs_c_o + c_o: abs_c_o + c_o + im2.shape[0], abs_r_o + r_o: abs_r_o + r_o + im2.shape[1]] = im2
+    im = Image.fromarray(new_image)
+    im.show()
 
 def match_images(images, show_corners):
     corner_lists = []
     M = []
-    print(show_corners)
     for i, image in enumerate(images):
+        print("### Image {} ###".format(i + 1))
         print("Converting to grey scale...")
         grey_scale_image = grey_scale(image)
         corner_lists.append(harris_corner_detection(grey_scale_image))
@@ -127,15 +150,37 @@ def match_images(images, show_corners):
             for (x, y) in corner_lists[-1]:
                 draw_cross(draw, y, x)
             im.show()
+        print("Calculating patch vectors")
         M.append(patch_vectors(corner_lists[-1], grey_scale_image))
-    R = M[0] * M[1].T
+
+    print("### Matching images ###")
+    R = np.dot(M[0], M[1].T)
+    # filtering i.e. only matches over 0.9 and best possible match per row
+    matches = []
+    for y in range(R.shape[0]):
+        for x in range(R.shape[1]):
+            if R[y, x] == max(R[y]) and R[y, x] > 0.9:
+                matches.append((y, x))
+    print("Doing RANSAC...")
+    print(matches)
+    list1 = []
+    for corner in corner_lists[0]:
+        list1.append((corner[1], corner[0]))
+    list2 = []
+    for corner in corner_lists[1]:
+        list2.append((corner[1], corner[0]))
+    row_offset, column_offset, match_count = basic_RANSAC(matches, list1, list2)
+    print("Result: {} {}".format(row_offset, column_offset))
+    print("Drawing images...")
+    draw_images_with_offset(grey_scale(images[0]), grey_scale(images[1]), row_offset, column_offset)
+
 
 def main():
     """
     Main function.
     """
     # for testing
-    sys.argv = ["main.py", "--file1", "arch1.png", "--file2", "arch2.png"]
+    # sys.argv = ["main.py", "--file1", "arch1.png", "--file2", "arch2.png"]
     parser = argparse.ArgumentParser()
     parser.add_argument("--file1", type=str, default="", help="First file for matching.")
     parser.add_argument("--file2", type=str, default="", help="Second file for matching.")
@@ -147,9 +192,9 @@ def main():
     else:
         # load image into 3d array
         image1 = np.asarray(Image.open(args.file1))
-        print("Read {0}x{1} image.".format(*image1.shape))
+        print("Read image 1: {0}x{1} pixels.".format(*image1.shape))
         image2 = np.asarray(Image.open(args.file2))
-        print("Read {0}x{1} image.".format(*image2.shape))
+        print("Read image 2: {0}x{1} pixels.".format(*image2.shape))
         match_images([image1, image2], args.show_corners)
 
 if __name__ == "__main__":
