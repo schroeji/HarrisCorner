@@ -28,14 +28,6 @@ def draw_cross(draw, x, y):
     draw.line((x - l, y, x + l, y), fill=CROSS_COLOR)
 
 
-def grey_scale_pil(image):
-    """
-    Converts image to grey scale by invoking PIl
-    """
-    im = Image.fromarray(image)
-    return np.array(im.convert("L"))
-
-
 def grey_scale(image):
     """
     Converts a colour image to a grey scale image
@@ -77,38 +69,44 @@ def calc_tensor(Ixx, Ixy, Iyy, x, y):
 def harris_corner_detection(grey_scale_image):
     """
     Performs harris corner detection for image.
-    Returns a list of corners.
+    Returns a list of corners with inverted coordinates i.e. (x, y) corresponds
+    to row x and column y in the image.
     """
-    print("Calculating derivatives...")
-    # im = Image.fromarray(grey_scale_image)
-    # im.show()
-    Ixx, Ixy, Iyy = calc_derivatives(grey_scale_image)
+    print("Started corner detection...")
     size_x = grey_scale_image.shape[0]
     size_y = grey_scale_image.shape[1]
-    print("Started corner detection...")
+    print("Calculating derivatives...")
+    Ixx, Ixy, Iyy = calc_derivatives(grey_scale_image)
     print("Calculating r_values for all pixels...")
     r_values = np.zeros(grey_scale_image.shape)
     # for each pixel which does not cause an out of range exception
     for x in range(DELTA_X, size_x - DELTA_X):
         for y in range(DELTA_Y, size_y - DELTA_Y):
+            # calculate the r_value i.e. the harris corner function
             M = calc_tensor(Ixx, Ixy, Iyy, x, y)
             r = np.linalg.det(M) - K*np.trace(M)**2.0
+            # save it the responses into an array
             r_values[x, y] = r
-    max_r = max(r_values.flatten())
     print("Thresholding and nonmax supression...")
+    max_r = max(r_values.flatten())
     list_of_corners = []
+    # thresholding and nonmax supression
     for x in range(DELTA_X, size_x - DELTA_X):
         for y in range(DELTA_Y, size_y - DELTA_Y):
-            # thresholding and nonmax supression
             max_in_window = max(r_values[x - DELTA_X: x + DELTA_X + 1, y - DELTA_Y: y + DELTA_Y + 1].flatten())
-            # if (r_values[x, y] > CORNER_THRESHOLD) and r_values[x, y] == max_in_window:
-                # list_of_corners.append((x, y))
+            # only use those r_values that are bigger than the threshold
+            # and are the maximum in their respective window
+            # if both are filfilled we found a corner
             if (r_values[x, y] >= max_r * CORNER_THRESHOLD_MULTIPLIER) and (r_values[x, y] == max_in_window):
                 list_of_corners.append((x, y))
+    # return all found corners
     return list_of_corners
 
 
 def patch_vectors(corner_list, image):
+    """
+    Calculates the M matrix containing the patch vector for each corners as a row vector.
+    """
     patches = []
     for i, (x, y) in enumerate(corner_list):
         v = image[x - DELTA_X: x + DELTA_X + 1, y - DELTA_Y: y + DELTA_Y + 1].flatten()
@@ -119,6 +117,9 @@ def patch_vectors(corner_list, image):
     return np.vstack(patches)
 
 def draw_images_with_offset(im1, im2, row_offset, column_offset):
+    """
+    Draws the 2 images overlapping using the given offsets.
+    """
     c_o = int(column_offset)
     r_o = int(row_offset)
     abs_c_o = abs(int(column_offset))
@@ -135,8 +136,14 @@ def draw_images_with_offset(im1, im2, row_offset, column_offset):
     im.show()
 
 def match_images(images, show_corners):
+    """
+    Matches the 2 images and displays the result.
+    Will show the results of the harris corner detection for each image if
+    show_corners is set to true.
+    """
     corner_lists = []
     M = []
+    # this loop detects the corners and calculates the patch vectors for each image
     for i, image in enumerate(images):
         print("### Image {} ###".format(i + 1))
         print("Converting to grey scale...")
@@ -152,8 +159,8 @@ def match_images(images, show_corners):
             im.show()
         print("Calculating patch vectors")
         M.append(patch_vectors(corner_lists[-1], grey_scale_image))
-
     print("### Matching images ###")
+    # calculate match matrix
     R = np.dot(M[0], M[1].T)
     # filtering i.e. only matches over 0.9 and best possible match per row
     matches = []
@@ -162,14 +169,11 @@ def match_images(images, show_corners):
             if R[y, x] == max(R[y]) and R[y, x] > 0.9:
                 matches.append((y, x))
     print("Doing RANSAC...")
-    print(matches)
-    list1 = []
-    for corner in corner_lists[0]:
-        list1.append((corner[1], corner[0]))
-    list2 = []
-    for corner in corner_lists[1]:
-        list2.append((corner[1], corner[0]))
+    # reverse the coordinates in the lists for RANSAC
+    list1 = [(y, x) for (x, y) in corner_lists[0]]
+    list2 = [(y, x) for (x, y) in corner_lists[1]]
     row_offset, column_offset, match_count = basic_RANSAC(matches, list1, list2)
+    # final step: display the result
     print("Result: {} {}".format(row_offset, column_offset))
     print("Drawing images...")
     draw_images_with_offset(grey_scale(images[0]), grey_scale(images[1]), row_offset, column_offset)
